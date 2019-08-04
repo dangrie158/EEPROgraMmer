@@ -2,8 +2,10 @@
 **/.direnv/**
 **/.vscode/**
 **/.DS_Store
-*.egg-info
-*.pyc
-.pytest_cache/**
-.mypy_cache/**
+CLI/*.egg-info
+CLI/*.pyc
+CLI/.pytest_cache/**
+CLI/.mypy_cache/**
+CLI/build/**
+CLI/dist/**
 CLI/test.bin
