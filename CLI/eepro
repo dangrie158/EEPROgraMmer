@@ -6,7 +6,7 @@ import sys
 from difflib import context_diff as diff_func
 from io import BytesIO
 
-import serial
+from serial import Serial
 from tqdm import tqdm
 
 def format_hex(in_bytes):
@@ -32,7 +32,7 @@ class FillBytes(BytesIO):
     def __repr__(self):
         return f'fill bytes (0x{self.fill_byte[0]:02X})'
 
-class EEProgrammer(serial.Serial):
+class EEProgrammer(Serial):
 
     esc_char = b'\x1B'
     end_char = b'\x04'
@@ -70,6 +70,11 @@ class EEProgrammer(serial.Serial):
         bytes_written = int(response)
         if bytes_written != len(raw_content):
             raise AssertionError(f'written {bytes_written} bytes, expected {len(bin_file)}')
+
+    def read_file(self, file, length, start_address=0x00):
+        contents = self.read_contents(start_address, length)
+        with open(file, 'wb') as outfile:
+            outfile.write(contents)
 
     def fill(self, fill_byte, length):
         dummy_file = FillBytes(fill_byte, length)
@@ -149,17 +154,29 @@ class EEProgrammer(serial.Serial):
         else:
             return byte
 
-parser = argparse.ArgumentParser(description='Write a binfile to an EEPROM')
+parser = argparse.ArgumentParser(description='Write to or read from an EEPROM')
+
 parser.add_argument('-p', '--port', help='serial port to the programmer', required=True)
 parser.add_argument('-f', '--file', help='binary file to write')
-parser.add_argument('-v', dest='verify', default=False, action='store_true', help='verify file contents after writing')
-parser.add_argument('-c', dest='clear', default=False, action='store_true', help='clear the eeprom (with 0xff bytes) before writing')
-parser.add_argument('--check-empty', default=False, action='store_true', help='make sure the EEPROM is empty (filled with 0xff)')
 parser.add_argument('-b', '--baud', type=int, default=115200, help='baudrate for communication with the programmer')
-parser.add_argument('-s', '--size', type=int, default=2048, help='size of the eeprom in bytes')
+parser.add_argument('-s', '--size', type=int, help='size of the EEPROM in bytes')
+
+group = parser.add_mutually_exclusive_group()
+group.add_argument('-w', dest='write', default=False, action='store_true', help='write <file> to the EEPROM')
+group.add_argument('-r', dest='read', default=False, action='store_true', help='read the contents of the EEPROM into file')
+parser.add_argument('-v', dest='verify', default=False, action='store_true', help='verify file contents after writing')
+parser.add_argument('-c', dest='clear', default=False, action='store_true', help='clear the EEPROM (with 0xff bytes) before writing or reading')
+parser.add_argument('--check-empty', default=False, action='store_true', help='make sure the EEPROM is empty (filled with 0xff)')
 
 if __name__ == '__main__':
     args = parser.parse_args()
+
+    if (args.write or args.read) and not args.file:
+        parser.error('for write and read actions, the file parameter is required')
+
+    if (args.clear or args.check_empty or args.read) and not args.size:
+            parser.error('for clear, check-empty and read actions, you need to specify the size of the EEPROM')
+
     with EEProgrammer(args.port, args.baud, timeout=1) as programmer:
         try:
             print('resetting programmer...')
@@ -173,13 +190,18 @@ if __name__ == '__main__':
                 print('checking eeprom for non-empty bytes...')
                 programmer.check_filled(b'\xff', args.size)
 
-            if args.file:
+            if args.write:
                 print('writing file...')
                 programmer.write_file(args.file)
 
-                if args.verify:
-                    print('verifying contents...')
-                    programmer.verify_file(args.file)
+            elif args.read:
+                print('reading eeprom contents...')
+                programmer.read_file(args.file, args.size, 0x00)
+
+            if args.verify:
+                print('verifying contents...')
+                programmer.verify_file(args.file)
+
         except (ConnectionError, AssertionError) as e:
             print()
             print(f'{e.__class__.__name__}: {e.args[0]}', file=sys.stderr)
