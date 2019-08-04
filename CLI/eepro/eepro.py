@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""
+CLI implementation to communicate with a connected Arduino based EEPROM Programmer
+"""
 
 import argparse
 import time
@@ -6,12 +9,15 @@ import sys
 from difflib import context_diff as diff_func
 from io import BytesIO
 
+from typing import Sequence, Union, BinaryIO
+
 from serial import Serial
 from tqdm import tqdm
 
-def format_hex(in_bytes):
+
+def format_hex(in_bytes: bytes) -> Sequence[str]:
     """
-    format an input sequence of bytes into a ordered form with lines of 
+    format an input sequence of bytes into a ordered form with lines of
     8 hex-formatted bytes prefixed by the address of the first byte in the line.
 
     :param in_bytes: the bytes to format
@@ -20,23 +26,24 @@ def format_hex(in_bytes):
     Example:
     >>> print('\n'.join(eepro.format_hex(b'0123456789ABCDEF')))
 
-    0x0000:    30 31 32 33  34 35 36 37 
-    0x0008:    38 39 41 42  43 44 45 46 
+    0x0000:    30 31 32 33  34 35 36 37
+    0x0008:    38 39 41 42  43 44 45 46
 
     """
     chunk_size = 8
-    byte = '{:02X} '
-    address = '0x{:04X}:    '
-    formatted_str = ''
+    byte = "{:02X} "
+    address = "0x{:04X}:    "
+    formatted_str = ""
 
-    for i in range(len(in_bytes)):
+    for i, in_byte in enumerate(in_bytes):
         if i % (chunk_size) == 0:
-            formatted_str += '\n' + address.format(i)
+            formatted_str += "\n" + address.format(i)
         elif i % (chunk_size // 2) == 0:
-            formatted_str += ' '
-        formatted_str += byte.format(in_bytes[i])
+            formatted_str += " "
+        formatted_str += byte.format(in_byte)
 
-    return formatted_str.split('\n')
+    return formatted_str.split("\n")
+
 
 class FillBytes(BytesIO):
     """
@@ -48,20 +55,25 @@ class FillBytes(BytesIO):
     :param length: number of bytes in the file
     """
 
-    def __init__(self, fill_byte, length):
+    def __init__(self, fill_byte: bytes, length: int):
         self.fill_byte = fill_byte
         super().__init__(fill_byte * length)
 
-    def __repr__(self):
-        return f'fill bytes (0x{self.fill_byte[0]:02X})'
+    def __repr__(self) -> str:
+        return f"fill bytes (0x{self.fill_byte[0]:02X})"
+
 
 class EEProgrammer(Serial):
+    """
+    Represents the connection to an Arduino based EEPROM programmer
+    via a (virtual) serial port
+    """
 
-    esc_char = b'\x1B'
-    end_char = b'\x04'
-    ack_char = b'\x06'
+    esc_char = b"\x1B"
+    end_char = b"\x04"
+    ack_char = b"\x06"
 
-    def reset(self):
+    def reset(self) -> None:
         """
         Resets the connected programmer and waits for it to start back up.
 
@@ -72,19 +84,23 @@ class EEProgrammer(Serial):
         self.dtr = False
         time.sleep(2)
 
-    def acknowledged_write(self, byte):
+    def acknowledged_write(self, byte: bytes) -> None:
         """
         Write a single byte to the programmer and wait for an acknowledge response.
 
         :param byte: the byte to write
-        :raises ConnectionError: If the programmer responds with anything but an acknowledge or the operation times out
+        :raises ConnectionError: If the programmer responds with anything but an
+            acknowledge or the operation times out
         """
         self.write(byte)
         self.flush()
         if self.read() != EEProgrammer.ack_char:
-            raise ConnectionError('Programmer did not acknowledge write', self.flush_read_buffer().decode('ascii'))
+            raise ConnectionError(
+                "Programmer did not acknowledge write",
+                self.flush_read_buffer().decode("ascii"),
+            )
 
-    def write_file(self, file, start_address=0x00):
+    def write_file(self, file: Union[str, BinaryIO], start_address: int = 0x00) -> None:
         """
         Write the contents of a file to the EEPROM.
         Any control bytes in the input file are automatically escaped before sending
@@ -93,29 +109,31 @@ class EEProgrammer(Serial):
         :param start_address: offset in the EEPROM where to start writing the file
         :raises AssertionError: if the programmer responds to have received less bytes
             than could be read from the file
-        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it 
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it
         """
-        self.acknowledged_write('w '.encode('ascii'))
-        self.acknowledged_write(f'{start_address}'.encode('ascii'))
+        self.acknowledged_write("w ".encode("ascii"))
+        self.acknowledged_write(f"{start_address}".encode("ascii"))
 
-        if type(file) == str:
-            with open(file, 'rb') as bin_file:
-                raw_content =  bin_file.read()
+        if isinstance(file, str):
+            with open(file, "rb") as bin_file:
+                raw_content = bin_file.read()
         else:
-            raw_content =  file.read()
+            raw_content = file.read()
 
         escaped_content = EEProgrammer.escape_file_contents(raw_content)
-        for byte in tqdm(escaped_content, desc=f'writing {file}'):
+        for byte in tqdm(escaped_content, desc=f"writing {file}"):
             self.acknowledged_write(bytes([byte]))
-                
+
         self.acknowledged_write(EEProgrammer.end_char)
 
         response = self.readline()
         bytes_written = int(response)
         if bytes_written != len(raw_content):
-            raise AssertionError(f'written {bytes_written} bytes, expected {len(bin_file)}')
+            raise AssertionError(
+                f"written {bytes_written} bytes, expected {len(raw_content)}"
+            )
 
-    def read_file(self, file, length, start_address=0x00):        
+    def read_file(self, file: str, length: int, start_address: int = 0x00) -> None:
         """
         read the contents of the EEPROM to a file
 
@@ -123,14 +141,15 @@ class EEProgrammer(Serial):
         :param length: number of bytes to read
         :param start_address: offset in the EEPROM where to start reading
         :raises AssertionError: if the programmer responds to have sent more bytes
-            than could be read from the connection or the programmer sends an invalid escape sequence
-        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it 
+            than could be read from the connection or the programmer sends an invalid
+            escape sequence
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it
         """
         contents = self.read_contents(start_address, length)
-        with open(file, 'wb') as outfile:
+        with open(file, "wb") as outfile:
             outfile.write(contents)
 
-    def fill(self, fill_byte, length, start_address=0x00):
+    def fill(self, fill_byte: bytes, length: int, start_address: int = 0x00) -> None:
         """
         fill an area of the EEPROM memory with a single value
 
@@ -139,12 +158,14 @@ class EEProgrammer(Serial):
         :param start_address: offset of the memory block from the start of the EEPROM
         :raises AssertionError: if the programmer responds to have received less bytes
             than specified
-        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it 
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it
         """
         dummy_file = FillBytes(fill_byte, length)
         self.write_file(dummy_file, start_address=start_address)
 
-    def check_filled(self, fill_byte, length, start_address=0x00):
+    def check_filled(
+        self, fill_byte: bytes, length: int, start_address: int = 0x00
+    ) -> None:
         """
         Check if a section of EEPROM is filled with a specific byte
 
@@ -152,15 +173,19 @@ class EEProgrammer(Serial):
         :param length: length of the memory block in bytes
         :param start_address: offset of the memory block from the start of the EEPROM
         :raises AssertionError: if the EEPROM reads back any byte different from the specified value
-        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it 
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it
         """
         dummy_file = FillBytes(fill_byte, length)
         try:
             self.verify_file(dummy_file, start_address=start_address)
-        except AssertionError as e:
-            raise AssertionError(f'EEPROM is not filled with 0x{fill_byte:02X}', e.args[1]) from e
+        except AssertionError as err:
+            raise AssertionError(
+                f"EEPROM is not filled with 0x{fill_byte:02X}", err.args[1]
+            ) from err
 
-    def verify_file(self, file, start_address=0x00):
+    def verify_file(
+        self, file: Union[str, BinaryIO], start_address: int = 0x00
+    ) -> None:
         """
         Read the contents of the EEPROM and compare each byte to a specified file.
         The number of bytes to read is determined by the file length.
@@ -168,21 +193,26 @@ class EEProgrammer(Serial):
         :param file: path to a file that will be opened in binary mode
         :param start_address: offset in the EEPROM where to start reading
         :raises AssertionError: if the EEPROM memory differs in any byte from the specified file
-        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it 
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it
         """
-        if type(file) == str:
-            with open(file, 'rb') as bin_file:
-                raw_content =  bin_file.read()
+        if isinstance(file, str):
+            with open(file, "rb") as bin_file:
+                raw_content = bin_file.read()
         else:
-            raw_content =  file.read()
+            raw_content = file.read()
 
         eeprom_content = self.read_contents(start_address, len(raw_content))
 
         if raw_content != eeprom_content:
-            diff = diff_func(format_hex(raw_content), format_hex(eeprom_content), fromfile=repr(file), tofile='EEPROM Contents')
-            raise AssertionError('Contents do not match input file', '\n'.join(diff))
+            diff = diff_func(
+                format_hex(raw_content),
+                format_hex(eeprom_content),
+                fromfile=repr(file),
+                tofile="EEPROM Contents",
+            )
+            raise AssertionError("Contents do not match input file", "\n".join(diff))
 
-    def read_contents(self, start_address, length):
+    def read_contents(self, start_address: int, length: int) -> bytes:
         """
         Read a section of memory from the EEPROM into a bytearray. This method automatically handles
         the unescapeing of control sequences for the programmer.
@@ -195,13 +225,13 @@ class EEProgrammer(Serial):
             or if an invalid escape sequence is received
         :raises ConnectionError: if the programmer fails to acknowledge any byte send to it
         """
-        self.acknowledged_write('r '.encode('ascii'))
-        self.acknowledged_write(f'{start_address}'.encode('ascii'))
-        self.acknowledged_write(f'{length}'.encode('ascii'))
+        self.acknowledged_write("r ".encode("ascii"))
+        self.acknowledged_write(f"{start_address}".encode("ascii"))
+        self.acknowledged_write(f"{length}".encode("ascii"))
 
-        content = b''
+        content = b""
 
-        progress = tqdm(desc='reading contents', total=length)
+        progress = tqdm(desc="reading contents", total=length)
         while True:
             char = self.read()
             if char == EEProgrammer.end_char:
@@ -211,35 +241,37 @@ class EEProgrammer(Serial):
                 bytes_read = int(response)
                 escaped_content = EEProgrammer.escape_file_contents(content)
                 if bytes_read != len(escaped_content):
-                    raise AssertionError(f'read {len(escaped_content)} bytes, expected {bytes_read}')
+                    raise AssertionError(
+                        f"read {len(escaped_content)} bytes, expected {bytes_read}"
+                    )
 
                 return content
-            elif char == EEProgrammer.esc_char:
+
+            if char == EEProgrammer.esc_char:
                 char = self.read()
 
                 if char not in [EEProgrammer.end_char, EEProgrammer.esc_char]:
-                    raise AssertionError('Invalid escape sequence received')
-            
+                    raise AssertionError("Invalid escape sequence received")
+
             content += char
             progress.update()
 
-
-    def flush_read_buffer(self):
+    def flush_read_buffer(self) -> bytes:
         """
         Read the serial buffer until empty and return the result
 
         :return: bytes object with the current contents of the serial read buffer
         """
-        content = b''
+        content = b""
         while True:
             line = self.readline()
-            if line == b'':
+            if line == b"":
                 break
             content += line
         return content
 
-    @staticmethod 
-    def escape_file_contents(contents):
+    @staticmethod
+    def escape_file_contents(contents: bytes) -> bytearray:
         """
         Escape each control character in a sequence of bytes.
 
@@ -251,8 +283,8 @@ class EEProgrammer(Serial):
             escaped_bytes += EEProgrammer.escape_byte(bytes([byte]))
         return escaped_bytes
 
-    @staticmethod 
-    def escape_byte(byte):
+    @staticmethod
+    def escape_byte(byte: bytes) -> bytes:
         """
         Escape a single byte. For non-control characters this is a no-op.
         Control characters (``EEProgrammer.end_char`` and ``EEProgrammer.esc_char``)
@@ -263,59 +295,105 @@ class EEProgrammer(Serial):
         """
         if byte in [EEProgrammer.end_char, EEProgrammer.esc_char]:
             return EEProgrammer.esc_char + byte
-        else:
-            return byte
 
-parser = argparse.ArgumentParser(description='Write to or read from an EEPROM')
+        return byte
 
-parser.add_argument('-p', '--port', help='serial port to the programmer', required=True)
-parser.add_argument('-f', '--file', help='binary file to write')
-parser.add_argument('-b', '--baud', type=int, default=115200, help='baudrate for communication with the programmer')
-parser.add_argument('-s', '--size', type=int, help='size of the EEPROM in bytes')
 
-group = parser.add_mutually_exclusive_group()
-group.add_argument('-w', dest='write', default=False, action='store_true', help='write <file> to the EEPROM')
-group.add_argument('-r', dest='read', default=False, action='store_true', help='read the contents of the EEPROM into file')
-parser.add_argument('-v', dest='verify', default=False, action='store_true', help='verify file contents after writing')
-parser.add_argument('-c', dest='clear', default=False, action='store_true', help='clear the EEPROM (with 0xff bytes) before writing or reading')
-parser.add_argument('--check-empty', default=False, action='store_true', help='make sure the EEPROM is empty (filled with 0xff)')
+def main() -> None:
+    """
+    Entrypoint for the CLI application
+    """
+    parser = argparse.ArgumentParser(description="Write to or read from an EEPROM")
 
-if __name__ == '__main__':
+    parser.add_argument(
+        "-p", "--port", help="serial port to the programmer", required=True
+    )
+    parser.add_argument("-f", "--file", help="binary file to write")
+    parser.add_argument(
+        "-b",
+        "--baud",
+        type=int,
+        default=115200,
+        help="baudrate for communication with the programmer",
+    )
+    parser.add_argument("-s", "--size", type=int, help="size of the EEPROM in bytes")
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "-w",
+        dest="write",
+        default=False,
+        action="store_true",
+        help="write <file> to the EEPROM",
+    )
+    group.add_argument(
+        "-r",
+        dest="read",
+        default=False,
+        action="store_true",
+        help="read the contents of the EEPROM into file",
+    )
+    parser.add_argument(
+        "-v",
+        dest="verify",
+        default=False,
+        action="store_true",
+        help="verify file contents after writing",
+    )
+    parser.add_argument(
+        "-c",
+        dest="clear",
+        default=False,
+        action="store_true",
+        help="clear the EEPROM (with 0xff bytes) before writing or reading",
+    )
+    parser.add_argument(
+        "--check-empty",
+        default=False,
+        action="store_true",
+        help="make sure the EEPROM is empty (filled with 0xff)",
+    )
     args = parser.parse_args()
 
     if (args.write or args.read) and not args.file:
-        parser.error('for write and read actions, the file parameter is required')
+        parser.error("for write and read actions, the file parameter is required")
 
     if (args.clear or args.check_empty or args.read) and not args.size:
-            parser.error('for clear, check-empty and read actions, you need to specify the size of the EEPROM')
+        parser.error(
+            "for clear, check-empty and read actions, you need to specify the size of the EEPROM"
+        )
 
     with EEProgrammer(args.port, args.baud, timeout=1) as programmer:
         try:
-            print('resetting programmer...')
+            print("resetting programmer...")
             programmer.reset()
 
             if args.clear:
-                print('cleaning eeprom...')
-                programmer.fill(b'\xff', args.size)
+                print("cleaning eeprom...")
+                programmer.fill(b"\xff", args.size)
 
             if args.check_empty:
-                print('checking eeprom for non-empty bytes...')
-                programmer.check_filled(b'\xff', args.size)
+                print("checking eeprom for non-empty bytes...")
+                programmer.check_filled(b"\xff", args.size)
 
             if args.write:
-                print('writing file...')
+                print("writing file...")
                 programmer.write_file(args.file)
 
             elif args.read:
-                print('reading eeprom contents...')
+                print("reading eeprom contents...")
                 programmer.read_file(args.file, args.size, 0x00)
 
             if args.verify:
-                print('verifying contents...')
+                print("verifying contents...")
                 programmer.verify_file(args.file)
 
-        except (ConnectionError, AssertionError) as e:
+        except (ConnectionError, AssertionError) as err:
             print()
-            print(f'{e.__class__.__name__}: {e.args[0]}', file=sys.stderr)
-            for reason in e.args[1:]:
+            print(f"{err.__class__.__name__}: {err.args[0]}", file=sys.stderr)
+            for reason in err.args[1:]:
                 print(reason, file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
