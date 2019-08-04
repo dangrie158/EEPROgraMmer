@@ -355,7 +355,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if (args.write or args.read) and not args.file:
+    if (args.write or args.read or args.verify) and not args.file:
         parser.error("for write and read actions, the file parameter is required")
 
     if (args.clear or args.check_empty or args.read) and not args.size:
