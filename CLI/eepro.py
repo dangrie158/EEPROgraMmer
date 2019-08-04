@@ -10,6 +10,20 @@ from serial import Serial
 from tqdm import tqdm
 
 def format_hex(in_bytes):
+    """
+    format an input sequence of bytes into a ordered form with lines of 
+    8 hex-formatted bytes prefixed by the address of the first byte in the line.
+
+    :param in_bytes: the bytes to format
+    :return: a list of formatted lines
+
+    Example:
+    >>> print('\n'.join(eepro.format_hex(b'0123456789ABCDEF')))
+
+    0x0000:    30 31 32 33  34 35 36 37 
+    0x0008:    38 39 41 42  43 44 45 46 
+
+    """
     chunk_size = 8
     byte = '{:02X} '
     address = '0x{:04X}:    '
@@ -25,6 +39,15 @@ def format_hex(in_bytes):
     return formatted_str.split('\n')
 
 class FillBytes(BytesIO):
+    """
+    File like object that is filled with ``length`` occurrences of
+    ``fill_byte`` bytes. Sole purpose of the class is to overwrite
+    the ``__repr__`` of ``io.ByteIO``
+
+    :param fill_byte: the byte to fill the file with
+    :param length: number of bytes in the file
+    """
+
     def __init__(self, fill_byte, length):
         self.fill_byte = fill_byte
         super().__init__(fill_byte * length)
@@ -39,18 +62,39 @@ class EEProgrammer(Serial):
     ack_char = b'\x06'
 
     def reset(self):
+        """
+        Resets the connected programmer and waits for it to start back up.
+
+        Useful to start in a known state
+        """
         self.dtr = True
         time.sleep(0.11)
         self.dtr = False
         time.sleep(2)
 
     def acknowledged_write(self, byte):
+        """
+        Write a single byte to the programmer and wait for an acknowledge response.
+
+        :param byte: the byte to write
+        :raises ConnectionError: If the programmer responds with anything but an acknowledge or the operation times out
+        """
         self.write(byte)
         self.flush()
         if self.read() != EEProgrammer.ack_char:
             raise ConnectionError('Programmer did not acknowledge write', self.flush_read_buffer().decode('ascii'))
 
     def write_file(self, file, start_address=0x00):
+        """
+        Write the contents of a file to the EEPROM.
+        Any control bytes in the input file are automatically escaped before sending
+
+        :param file: path to a file or an already opened file-like object in binary mode
+        :param start_address: offset in the EEPROM where to start writing the file
+        :raises AssertionError: if the programmer responds to have received less bytes
+            than could be read from the file
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it 
+        """
         self.acknowledged_write('w '.encode('ascii'))
         self.acknowledged_write(f'{start_address}'.encode('ascii'))
 
@@ -71,24 +115,61 @@ class EEProgrammer(Serial):
         if bytes_written != len(raw_content):
             raise AssertionError(f'written {bytes_written} bytes, expected {len(bin_file)}')
 
-    def read_file(self, file, length, start_address=0x00):
+    def read_file(self, file, length, start_address=0x00):        
+        """
+        read the contents of the EEPROM to a file
+
+        :param file: path to a file that will be opened in binary mode (does not need to exist)
+        :param length: number of bytes to read
+        :param start_address: offset in the EEPROM where to start reading
+        :raises AssertionError: if the programmer responds to have sent more bytes
+            than could be read from the connection or the programmer sends an invalid escape sequence
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it 
+        """
         contents = self.read_contents(start_address, length)
         with open(file, 'wb') as outfile:
             outfile.write(contents)
 
-    def fill(self, fill_byte, length):
-        dummy_file = FillBytes(fill_byte, length)
-        self.write_file(dummy_file)
+    def fill(self, fill_byte, length, start_address=0x00):
+        """
+        fill an area of the EEPROM memory with a single value
 
-    def check_filled(self, fill_byte, length):
+        :param fill_byte: value to fill the EEPROM memory section
+        :param length: length of the memory block in bytes
+        :param start_address: offset of the memory block from the start of the EEPROM
+        :raises AssertionError: if the programmer responds to have received less bytes
+            than specified
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it 
+        """
+        dummy_file = FillBytes(fill_byte, length)
+        self.write_file(dummy_file, start_address=start_address)
+
+    def check_filled(self, fill_byte, length, start_address=0x00):
+        """
+        Check if a section of EEPROM is filled with a specific byte
+
+        :param fill_byte: value that should be read by every cell in the specified memory area
+        :param length: length of the memory block in bytes
+        :param start_address: offset of the memory block from the start of the EEPROM
+        :raises AssertionError: if the EEPROM reads back any byte different from the specified value
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it 
+        """
         dummy_file = FillBytes(fill_byte, length)
         try:
-            self.verify_file(dummy_file)
+            self.verify_file(dummy_file, start_address=start_address)
         except AssertionError as e:
-            raise AssertionError('EEPROM is not empty', e.args[1]) from e
+            raise AssertionError(f'EEPROM is not filled with 0x{fill_byte:02X}', e.args[1]) from e
 
     def verify_file(self, file, start_address=0x00):
+        """
+        Read the contents of the EEPROM and compare each byte to a specified file.
+        The number of bytes to read is determined by the file length.
 
+        :param file: path to a file that will be opened in binary mode
+        :param start_address: offset in the EEPROM where to start reading
+        :raises AssertionError: if the EEPROM memory differs in any byte from the specified file
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it 
+        """
         if type(file) == str:
             with open(file, 'rb') as bin_file:
                 raw_content =  bin_file.read()
@@ -102,6 +183,18 @@ class EEProgrammer(Serial):
             raise AssertionError('Contents do not match input file', '\n'.join(diff))
 
     def read_contents(self, start_address, length):
+        """
+        Read a section of memory from the EEPROM into a bytearray. This method automatically handles
+        the unescapeing of control sequences for the programmer.
+
+        :param start_address: offset to the beginning of the memory block to read
+        :param length: size of the memory block to read
+        :return: bytes object with the specified memory block contents
+
+        :raises AssertionError: if the programmer repors to have sent more bytes than were received
+            or if an invalid escape sequence is received
+        :raises ConnectionError: if the programmer fails to acknowledge any byte send to it
+        """
         self.acknowledged_write('r '.encode('ascii'))
         self.acknowledged_write(f'{start_address}'.encode('ascii'))
         self.acknowledged_write(f'{length}'.encode('ascii'))
@@ -132,6 +225,11 @@ class EEProgrammer(Serial):
 
 
     def flush_read_buffer(self):
+        """
+        Read the serial buffer until empty and return the result
+
+        :return: bytes object with the current contents of the serial read buffer
+        """
         content = b''
         while True:
             line = self.readline()
@@ -142,6 +240,12 @@ class EEProgrammer(Serial):
 
     @staticmethod 
     def escape_file_contents(contents):
+        """
+        Escape each control character in a sequence of bytes.
+
+        :param contents: the sequence to escape (bytes or list of ints)
+        :return: bytes of the escaped sequence
+        """
         escaped_bytes = bytearray()
         for byte in contents:
             escaped_bytes += EEProgrammer.escape_byte(bytes([byte]))
@@ -149,6 +253,14 @@ class EEProgrammer(Serial):
 
     @staticmethod 
     def escape_byte(byte):
+        """
+        Escape a single byte. For non-control characters this is a no-op.
+        Control characters (``EEProgrammer.end_char`` and ``EEProgrammer.esc_char``)
+        will be prefixed with an additional ``EEProgrammer.end_char``.
+
+        :param byte: the byte to escape
+        :return: a ``bytes`` object containing the escaped input
+        """
         if byte in [EEProgrammer.end_char, EEProgrammer.esc_char]:
             return EEProgrammer.esc_char + byte
         else:
