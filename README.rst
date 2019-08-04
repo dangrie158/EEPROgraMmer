@@ -11,6 +11,13 @@ a simple Arduino with 2 shift-registers to interface the EEPROM.
 
 Based on the [Arduino Code](https://github.com/beneater/eeprom-programmer) written by [Ben Eater](https://eater.net).
 
+Install
+-------
+
+1. ``pip install eepro``
+2. Flash an Arduino with the sketch in ``Arduino/EEPROgraMmer``
+3. Connect the Arduino to the external components following the schematic.
+
 *********
 Schematic
 *********
