@@ -14,9 +14,8 @@ setup(
     packages=['eepro'],
     include_package_data=True,
     license='MIT',
-    description='Arduino-based Universal parallel EEPROM Programmer',
-    long_description=read('../README.md'),
-    long_description_content_type='text/markdown',
+    description='Arduino based EEPROM Programmer for parallel EEPROMS',
+    long_description=read('../README.rst'),
     classifiers=[
         'Development Status :: 1 - Planning',
         'Topic :: Utilities',
