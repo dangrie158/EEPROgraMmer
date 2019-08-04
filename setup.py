@@ -7,7 +7,7 @@ def read(fname):
 
 setup(
     name='eepro',
-    version='0.1.2',
+    version='0.2.0',
     author='Daniel Grießhaber',
     author_email='dangrie158@gmail.com',
     url='https://github.com/dangrie158/EEPROgraMmer',
