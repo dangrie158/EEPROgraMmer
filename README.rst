@@ -22,7 +22,9 @@ Install
 Schematic
 *********
 
-check out the [original project](https://github.com/beneater/eeprom-programmer)
+Check out the [original project](https://github.com/beneater/eeprom-programmer)
+
+There is also a Autodesk Eagle Project with pregenerated Gerbers in the Boards directory. This Board holds the 2 Shift Registers and has a place for a ZIF Socket.
 
 ********
 Synopsys
