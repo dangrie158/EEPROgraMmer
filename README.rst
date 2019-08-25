@@ -6,6 +6,8 @@ EEPROgraMmer
 Arduino EEPROM Programmer
 *************************
 
+.. image:: Arduino-Shield/assembled.jpg
+
 Universal Programmer for parallel EEPROMS using a python CLI and
 a simple Arduino with 2 shift-registers to interface the EEPROM.
 
