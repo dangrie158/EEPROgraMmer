@@ -11,7 +11,7 @@ Arduino EEPROM Programmer
 Universal Programmer for parallel EEPROMS using a python CLI and
 a simple Arduino with 2 shift-registers to interface the EEPROM.
 
-Based on the [Arduino Code](https://github.com/beneater/eeprom-programmer) written by [Ben Eater](https://eater.net).
+Based on the `Arduino Code <https://github.com/beneater/eeprom-programmer>`_ written by `Ben Eater <https://eater.net>`_.
 
 Install
 -------
@@ -24,7 +24,7 @@ Install
 Schematic
 *********
 
-Check out the [original project](https://github.com/beneater/eeprom-programmer)
+Check out the `original project <https://github.com/beneater/eeprom-programmer>`_
 
 There is also a Autodesk Eagle Project with pregenerated Gerbers in the Boards directory. This Board holds the 2 Shift Registers and has a place for a ZIF Socket.
 
